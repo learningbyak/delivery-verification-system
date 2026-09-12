@@ -2,10 +2,22 @@ import "server-only";
 /**
  * Server-only Supabase client.
  *
- * The `import "server-only"` above is not decorative — it causes a build
- * failure if any client component ever imports this file, even
- * transitively. This is the ONLY module in the codebase permitted to
+ * SECURITY: this is the ONLY module in the codebase permitted to
  * reference SUPABASE_SERVICE_ROLE_KEY.
+ *
+ * The `import "server-only"` above, combined with Next.js's
+ * client/server component boundary, causes code from this module to
+ * be excluded from client-side JavaScript bundles — this was verified
+ * directly against real compiled build output, not assumed. However:
+ * it is NOT guaranteed to produce a loud build ERROR if a client
+ * component imports this file. In testing against Next.js 16, a
+ * deliberate bad import was silently tree-shaken out of the client
+ * bundle rather than failing the build. The safety property that
+ * actually matters — service-role-adjacent code never reaching the
+ * browser — held either way, but treat this as a silent safeguard,
+ * not a loud one. Don't rely on "the build will tell me" as the only
+ * defense; code review and keeping this file's usage confined to
+ * Server Components and Route Handlers are the primary defenses.
  *
  * SECURITY RULES for anyone extending this file in a later phase:
  *   1. Never export the service-role client for use in code that runs
