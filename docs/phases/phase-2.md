@@ -9,12 +9,13 @@
 - **Admin capability:** create a Client Main Panel account for any org (email + auto-generated password), per the confirmed Option A decision.
 - **Client Main Panel:** login (org name + secret code + email + password), upload page, dashboard listing invoices by department, and a read-only sheet view per department/invoice showing ordered vs. delivered quantities and status.
 
-## Two real bugs found and fixed during this phase — worth knowing about
+## Three real bugs found and fixed during this phase — worth knowing about
 
 1. **bcrypt version incompatibility.** `bcryptjs` (used in Phase 1 for secret codes) produces `$2b$`-prefixed hashes by default. Tested directly: this Postgres/pgcrypto version does not correctly verify `$2b$` hashes — it silently produces garbage instead of erroring. Fixed by converting to `$2a$` at hash-generation time (same algorithm, compatible tag). **This was verified with a real hash against real Postgres, not assumed** — if you ever change the hashing library, re-verify this.
 2. **A trigger that didn't actually prevent tampering.** The first version of the `line_status` trigger only fired on `UPDATE OF delivered_qty, ordered_qty`, meaning a direct write to `line_status` alone never triggered recomputation — the tampering attempt it was meant to stop actually succeeded silently. Caught by deliberately trying to tamper with a test row, not by reading the code. Fixed by firing the trigger on every `UPDATE`, unconditionally.
+3. **A real production timeout on large invoices, found by you.** The `department_orders` status-rollup trigger was `FOR EACH ROW` — so uploading an invoice with 200+ line items in one department fired that many separate aggregate re-scans and separate `UPDATE`s within a single bulk `INSERT` statement, well beyond what a flat per-row cost should look like. Reproduced locally: the original trigger scaled superlinearly (214 rows: 27ms, 2000 rows: 778ms) — on Supabase's real infrastructure under real load, a large department exceeded the statement timeout and the whole upload failed. **Fixed in migration `0007`**: replaced the row-level trigger with statement-level triggers using transition tables, so a bulk insert recomputes each affected department order's status once per statement, not once per row — after the fix, 5000 rows takes 179ms (roughly linear scaling, confirmed by re-running the same benchmark). Tampering-resistance was re-verified to still hold after the fix.
 
-Both were caught by literally running the code against a real (locally-installed, temporary) PostgreSQL instance and a real FastAPI server — not by inspection alone. Same discipline going forward.
+Every one of these was caught by actually running the code against a real (locally-installed, temporary) PostgreSQL instance — not by inspection alone. Same discipline going forward.
 
 ## Design decisions worth knowing about
 
@@ -27,6 +28,7 @@ Both were caught by literally running the code against a real (locally-installed
 ## Manual setup required in your Supabase project
 
 1. Run `supabase/migrations/0005_verify_org_secret_code.sql`, then `0006_invoice_ingestion.sql`, in that order, via the SQL Editor (after Phase 1's 4 migrations, which should already be applied).
+2. Run `supabase/migrations/0007_fix_department_order_status_trigger_performance.sql` — this fixes the large-invoice timeout bug described above. Required even if you already ran 0006, since 0007 replaces the broken trigger.
 
 ## Deploying the parser service
 
@@ -49,6 +51,7 @@ This is a second, separate deployable component — it does not run on Vercel al
 - [ ] Re-uploading the same invoice creates a new version rather than failing or overwriting
 - [ ] A Client Main Panel account for Org A cannot see Org B's invoices (test directly, e.g. by creating a second org and account)
 - [ ] Uploading a non-PDF file, or a PDF over 20MB, is rejected with a clear error
+- [ ] Uploading a large invoice (200+ line items in one department) completes without a timeout error
 
 ## Exit criteria
 

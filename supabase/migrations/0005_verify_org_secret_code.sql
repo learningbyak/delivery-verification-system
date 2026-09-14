@@ -17,6 +17,17 @@
 -- was verified directly in this migration's own test, not assumed
 -- (see docs/phases/phase-2.md's testing notes).
 --
+-- IMPORTANT, found via a real deployment failure against an actual
+-- Supabase project (not caught by local testing, since local testing
+-- didn't replicate this exact Supabase-specific convention): Supabase
+-- installs pgcrypto into a schema called `extensions`, not `public`.
+-- A function with `SET search_path = public` alone genuinely cannot
+-- find crypt()/gen_salt() even though pgcrypto IS installed —
+-- Postgres reports "function does not exist," which looks like a
+-- missing extension but isn't. The fix, verified against a
+-- reproduction of this exact scenario, is including `extensions` in
+-- this function's search_path explicitly.
+--
 -- Known limitation, deliberately deferred: a nonexistent org_name
 -- returns instantly (no matching row, crypt() never runs), while an
 -- existing org with a wrong code takes slightly longer (crypt() does
@@ -29,7 +40,7 @@ CREATE OR REPLACE FUNCTION public.verify_org_secret_code(p_org_name text, p_secr
 RETURNS uuid
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 STABLE
 AS $$
   SELECT org_id FROM public.organizations
