@@ -30,7 +30,19 @@ export function generateSecretCode(): string {
 }
 
 export async function hashSecretCode(plaintext: string): Promise<string> {
-  return bcrypt.hash(plaintext, BCRYPT_SALT_ROUNDS);
+  const hash = await bcrypt.hash(plaintext, BCRYPT_SALT_ROUNDS);
+  // bcryptjs produces $2b$-prefixed hashes by default. Tested directly
+  // against this project's Postgres/pgcrypto version: crypt() does
+  // NOT correctly verify $2b$ hashes (it silently produces garbage
+  // output instead of erroring, which is worse than a loud failure —
+  // this was caught by an explicit interop test in Phase 2, not
+  // assumed). $2a$ and $2b$ are the same algorithm — the version tag
+  // difference addresses a historical edge case that doesn't affect
+  // standard-charset passwords like our generated secret codes — so
+  // this substitution is safe and verified working, not a guess.
+  // See supabase/migrations/0005_verify_org_secret_code.sql, which
+  // relies on this.
+  return hash.replace(/^\$2b\$/, "$2a$");
 }
 
 export async function verifySecretCode(

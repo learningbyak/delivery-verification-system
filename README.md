@@ -2,7 +2,7 @@
 
 A multi-tenant web application for verifying grocery/retail deliveries against invoices — barcode scanning, live delivery-status tracking, and organization-scoped data isolation, built on Next.js and Supabase.
 
-**Current status: Phase 1 of 9 — Admin Panel core.** See [`docs/phases/`](./docs/phases) for the full roadmap and exactly what is and isn't built yet.
+**Current status: Phase 2 of 9 — Client Main Panel + PDF ingestion.** See [`docs/phases/`](./docs/phases) for the full roadmap and exactly what is and isn't built yet.
 
 ---
 
@@ -22,7 +22,8 @@ Every organization's data is isolated at the database level via PostgreSQL Row-L
 
 - **Framework:** Next.js 16 (App Router, TypeScript)
 - **Database & Auth:** Supabase (PostgreSQL, Row-Level Security, Auth, Realtime, Storage)
-- **Hosting:** Vercel
+- **PDF parsing:** Python 3.12 / FastAPI / pdfplumber — a separate, network-isolated microservice
+- **Hosting:** Vercel (app) + Render (parser service)
 - **Secret handling:** bcrypt-hashed org secret codes, service-role key confined to one file, never bundled client-side
 
 ## Getting started
@@ -58,6 +59,17 @@ npm run dev
 
 Visit `http://localhost:3000/admin/login`.
 
+### Parser service (separate, for PDF uploads)
+
+```bash
+cd parser-service
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # set PARSER_SERVICE_TOKEN to a random value
+uvicorn main:app --port 8000
+```
+Then set `PDF_PARSER_SERVICE_URL=http://localhost:8000` and `PDF_PARSER_SERVICE_TOKEN` (same value) in the main app's `.env.local`. See [`docs/phases/phase-2.md`](./docs/phases/phase-2.md) for production deployment (Render).
+
 Full, from-scratch, beginner-friendly setup instructions (including creating GitHub/Supabase/Vercel accounts): see [`docs/setup/from-scratch.md`](./docs/setup/from-scratch.md).
 
 ## Available scripts
@@ -71,6 +83,11 @@ Full, from-scratch, beginner-friendly setup instructions (including creating Git
 | `npm run check:rls` | Fails if any migration creates a table without enabling Row-Level Security |
 | `npm run create-admin -- <email> <password>` | One-time bootstrap: creates the first Admin account |
 
+Parser service tests (separate from the main app's checks):
+```bash
+cd parser-service && pytest -v
+```
+
 All of the above (except `create-admin`, which is a local-only, one-time setup step) run automatically in CI on every push and pull request — see [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
 
 ## Project structure
@@ -79,17 +96,25 @@ All of the above (except `create-admin`, which is a local-only, one-time setup s
 src/
   app/
     admin/                Admin Panel pages (login, dashboard, org detail)
+    client/                Client Main Panel pages (login, dashboard, upload, order detail)
     api/admin/             Admin API routes
+    api/client/             Client Main Panel API routes (upload)
   lib/
     supabase/
       client.ts            Browser-safe Supabase client (anon key only)
       server.ts             Server-only client — the only file permitted
                              to reference the service-role key
     secret-code.ts          Org secret code generation + hashing
-  proxy.ts                  Route protection for /admin and /api/admin
+    invoice-date.ts          Invoice date format parsing
+  proxy.ts                  Route protection for /admin, /client, and their APIs
 supabase/
   migrations/                SQL migrations — RLS required on every table,
                              enforced by scripts/check-rls.ts in CI
+parser-service/
+  main.py                    FastAPI app — PDF upload endpoint
+  parser.py                  Invoice parsing logic (Loblaws template)
+  test_parser.py             Automated tests against a real sample invoice
+  Dockerfile                  Deploy target: Render or similar, network-isolated
 scripts/
   check-rls.ts               CI enforcement script (see above)
   create-admin.ts            One-time bootstrap script
@@ -97,6 +122,8 @@ docs/
   phases/                    Phase-by-phase scope and exit criteria
   upgrades/                  Step-by-step upgrade guide between each phase
   security/                  Pre-production security assessment
+  architecture/               Full architecture & data model spec
+  setup/                      From-scratch setup guide
 ```
 
 ## Security
@@ -109,7 +136,7 @@ Built in phases, each one shippable and testable on its own — see [`docs/phase
 
 - [x] **Phase 0** — Foundations (secure empty skeleton, CI, RLS-by-default enforcement)
 - [x] **Phase 1** — Admin Panel core (organizations, departments, real RLS policies)
-- [ ] **Phase 2** — Client Main Panel auth + PDF invoice ingestion
+- [x] **Phase 2** — Client Main Panel auth + PDF invoice ingestion
 - [ ] **Phase 3** — Client Portal + barcode scanning core loop
 - [ ] **Phase 4** — Real-time updates + export
 - [ ] **Phase 5** — Admin activity feed + invoice locking

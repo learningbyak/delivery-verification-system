@@ -31,6 +31,28 @@ jobs:
       - name: Dependency vulnerability scan
         run: npm audit --audit-level=high
 
+  parser-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: parser-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: parser-service/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run parser tests
+        run: pytest -v
+
   # Placeholder — SAST wired in properly once there's real business logic
   # to scan (Phase 6, per the security assessment's production gate).
   # Left as a visible, intentional gap rather than silently absent.

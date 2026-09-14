@@ -32,6 +32,7 @@ import "server-only";
  *      awaiting cookies()) — every call site must `await` it.
  */
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
 /**
@@ -69,15 +70,31 @@ export async function createServerActionClient() {
 /**
  * Service-role client. Bypasses RLS entirely.
  *
- * Not implemented yet on purpose — Phase 0 has no trusted server jobs
- * that need it. When a real use case exists (e.g. Phase 2's PDF
- * ingestion writer), implement it here with a comment explaining
- * exactly why RLS must be bypassed for that specific operation, and
- * keep the scope as narrow as possible.
+ * Implemented in Phase 2 for exactly one real use case: Admin creating
+ * a Client Main Panel account (POST /api/admin/orgs/:orgId/users).
+ * This needs to create a Supabase Auth user via the admin API, which
+ * requires service-role — there's no RLS-respecting way to create
+ * another person's auth credentials.
+ *
+ * Callers of this function MUST independently verify the caller is an
+ * admin BEFORE calling it — this client has no awareness of who's
+ * asking, since bypassing RLS means Postgres can't enforce that for
+ * you. In this codebase, that check happens in proxy.ts (blocks
+ * non-admin requests to /api/admin/* before they're even routed) AND
+ * again explicitly inside each route handler that uses this client —
+ * defense in depth, per docs/security/assessment.md.
  */
-export function createServiceRoleClient(): never {
-  throw new Error(
-    "Service-role client not implemented in Phase 0 — see comment above " +
-      "createServiceRoleClient in src/lib/supabase/server.ts before adding it."
-  );
+export function createServiceRoleClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceRoleKey) {
+    throw new Error(
+      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY."
+    );
+  }
+
+  return createSupabaseClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 }

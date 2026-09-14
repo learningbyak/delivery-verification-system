@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createServerActionClient } from "@/lib/supabase/server";
 import DepartmentManager from "./department-manager";
 import RotateSecretCode from "./rotate-secret-code";
+import CreateClientAdminForm from "./create-client-admin-form";
 
 // Same reasoning as /admin/page.tsx — session-scoped, RLS-filtered
 // data must never be statically cached.
@@ -42,6 +43,15 @@ export default async function OrgDetailPage({
       <section>
         <h2 style={{ fontSize: "1.05rem" }}>Departments</h2>
         <DepartmentManager orgId={org.org_id} initialDepartments={departments ?? []} />
+      </section>
+
+      <section>
+        <h2 style={{ fontSize: "1.05rem" }}>Client Main Panel access</h2>
+        <p style={{ color: "#666", fontSize: "0.9rem" }}>
+          Per Option A: only Admin can create these accounts — there is no
+          self-service signup.
+        </p>
+        <CreateClientAdminForm orgId={org.org_id} />
       </section>
     </main>
   );
