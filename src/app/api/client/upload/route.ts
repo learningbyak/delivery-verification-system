@@ -2,7 +2,23 @@ import { NextResponse } from "next/server";
 import { createServerActionClient } from "@/lib/supabase/server";
 import { parseInvoiceDate } from "@/lib/invoice-date";
 
+// Vercel Hobby (free) plan defaults every serverless function to a
+// 10-second timeout — far too short when the parser service is on
+// Render's free tier, which spins down after 15 minutes idle and can
+// take 30-60 seconds to wake back up on the next request (verified
+// against Render's current published behavior, Sept 2026). Without
+// this, the Vercel function was very likely dying while waiting for
+// Render to finish waking up — before the PDF was ever actually
+// parsed. 60 is the maximum allowed on Hobby via this config without
+// enabling Fluid Compute (which allows up to 300s on Hobby, also
+// free, if 60s still isn't enough in practice).
+export const maxDuration = 60;
+
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+// Leaves headroom under maxDuration for the rest of the request
+// (auth checks, the database writes after parsing) rather than
+// consuming the entire 60s budget on the parser call alone.
+const PARSER_FETCH_TIMEOUT_MS = 50_000;
 
 type ParsedLineItem = {
   line_no: string;
@@ -70,16 +86,45 @@ export async function POST(request: Request) {
 
   // Forward to the parser microservice. Server-to-server only — the
   // browser never talks to the parser directly.
+  //
+  // On Render's free tier, the service may be asleep (spun down after
+  // 15 minutes idle) and take 30-60s to wake up on this request. An
+  // AbortController-based timeout here gives a clear, honest error
+  // instead of an indefinite hang if something is genuinely broken —
+  // distinct from a slow-but-working cold start, which this timeout
+  // is set long enough to tolerate.
   const parserFormData = new FormData();
   parserFormData.append("file", file);
 
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), PARSER_FETCH_TIMEOUT_MS);
+
   let parseResult: ParseResponse;
   try {
-    const parserRes = await fetch(`${parserUrl}/parse`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${parserToken}` },
-      body: parserFormData,
-    });
+    let parserRes: Response;
+    try {
+      parserRes = await fetch(`${parserUrl}/parse`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${parserToken}` },
+        body: parserFormData,
+        signal: abortController.signal,
+      });
+    } catch (fetchError) {
+      if (fetchError instanceof Error && fetchError.name === "AbortError") {
+        return NextResponse.json(
+          {
+            error:
+              "The PDF reader took too long to respond. If it's been a while since the " +
+              "last upload, it may have been asleep and needed to wake up — please try " +
+              "again in a moment.",
+          },
+          { status: 504 }
+        );
+      }
+      throw fetchError;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!parserRes.ok) {
       const body = await parserRes.json().catch(() => ({}));

@@ -1,14 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+
+// After ~8 seconds, most likely the PDF reader was asleep (it spins
+// down after 15 minutes unused on its current free hosting tier) and
+// is now waking up — worth telling the person that rather than
+// leaving them staring at a spinner wondering if it's broken.
+const SLOW_UPLOAD_HINT_MS = 8_000;
 
 export default function UploadPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showSlowHint, setShowSlowHint] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => setShowSlowHint(true), SLOW_UPLOAD_HINT_MS);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -16,6 +29,7 @@ export default function UploadPage() {
 
     setError(null);
     setSuccess(null);
+    setShowSlowHint(false);
     setLoading(true);
 
     const formData = new FormData();
@@ -54,6 +68,12 @@ export default function UploadPage() {
           {loading ? "Uploading and parsing…" : "Upload"}
         </button>
       </form>
+      {loading && showSlowHint && (
+        <p style={{ color: "#666", fontSize: "0.9rem" }}>
+          Still working — if the PDF reader hasn&apos;t been used in a while, it can
+          take up to a minute to wake up. No need to refresh, it&apos;s still going.
+        </p>
+      )}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {success && <p style={{ color: "green" }}>{success}</p>}
     </main>
