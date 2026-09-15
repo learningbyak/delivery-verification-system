@@ -104,130 +104,38 @@ export async function POST(request: Request) {
     );
   }
 
-  // Compute the next version for this org+invoice_number, per the
-  // documented re-upload behavior (versioning, never overwriting —
-  // see docs/architecture/spec.md Section 4.3).
-  const { data: existingBatches } = await supabase
-    .from("upload_batches")
-    .select("version")
-    .eq("org_id", orgId)
-    .eq("invoice_number", parseResult.invoice_number)
-    .order("version", { ascending: false })
-    .limit(1);
+  // Entire ingestion — batch, department matching/creation, department
+  // orders, all line items — happens in ONE Postgres function call,
+  // which is one transaction. If anything fails anywhere inside it,
+  // nothing is saved. Fixes a real bug: the previous version did this
+  // as a sequence of separate inserts from application code, so a
+  // failure partway through (e.g. the timeout bug fixed in migration
+  // 0007) left earlier departments' data behind as an orphaned,
+  // confusing partial upload. See migration 0008.
+  const { data: batchId, error: ingestError } = await supabase.rpc(
+    "ingest_parsed_invoice",
+    {
+      p_org_id: orgId,
+      p_invoice_number: parseResult.invoice_number,
+      p_invoice_date: parseInvoiceDate(parseResult.invoice_date_raw),
+      p_uploaded_by: user.id,
+      p_source_filename: file.name,
+      p_departments: parseResult.departments,
+    }
+  );
 
-  const nextVersion = (existingBatches?.[0]?.version ?? 0) + 1;
-
-  const { data: batch, error: batchError } = await supabase
-    .from("upload_batches")
-    .insert({
-      org_id: orgId,
-      invoice_number: parseResult.invoice_number,
-      invoice_date: parseInvoiceDate(parseResult.invoice_date_raw),
-      uploaded_by: user.id,
-      source_filename: file.name,
-      version: nextVersion,
-    })
-    .select("batch_id")
-    .single();
-
-  if (batchError || !batch) {
+  if (ingestError || !batchId) {
     return NextResponse.json(
-      { error: "Failed to create upload record: " + batchError?.message },
+      { error: "Failed to save invoice: " + ingestError?.message },
       { status: 500 }
     );
   }
 
-  const departmentOrderIds: string[] = [];
-
-  for (const dept of parseResult.departments) {
-    // Match or create the department by its source code within this
-    // org — per the confirmed decision that departments auto-match/
-    // create from the PDF's own DEPARTMENT: sections.
-    const { data: existingDept } = await supabase
-      .from("departments")
-      .select("department_id")
-      .eq("org_id", orgId)
-      .eq("source_dept_code", dept.source_dept_code)
-      .maybeSingle();
-
-    let departmentId = existingDept?.department_id as string | undefined;
-
-    if (!departmentId) {
-      const { data: newDept, error: deptError } = await supabase
-        .from("departments")
-        .insert({
-          org_id: orgId,
-          department_name: dept.department_name,
-          source_dept_code: dept.source_dept_code,
-        })
-        .select("department_id")
-        .single();
-
-      if (deptError || !newDept) {
-        return NextResponse.json(
-          {
-            error: `Failed to create department "${dept.department_name}": ${deptError?.message}`,
-            batch_id: batch.batch_id,
-          },
-          { status: 500 }
-        );
-      }
-      departmentId = newDept.department_id;
-    }
-
-    const { data: deptOrder, error: deptOrderError } = await supabase
-      .from("department_orders")
-      .insert({ batch_id: batch.batch_id, department_id: departmentId })
-      .select("dept_order_id")
-      .single();
-
-    if (deptOrderError || !deptOrder) {
-      return NextResponse.json(
-        {
-          error: `Failed to create department order for "${dept.department_name}": ${deptOrderError?.message}`,
-          batch_id: batch.batch_id,
-        },
-        { status: 500 }
-      );
-    }
-    departmentOrderIds.push(deptOrder.dept_order_id);
-
-    const lineItemRows = dept.line_items.map((item) => ({
-      dept_order_id: deptOrder.dept_order_id,
-      row_data: item,
-      barcode_value: item.barcode_value,
-      article_number: item.article_number,
-      description: item.description,
-      ordered_qty: item.ordered_qty,
-      supplier_reported_qty: item.supplier_reported_qty,
-      // Pre-filled from the supplier's own reported quantity — the
-      // confirmed baseline, refined later by actual dock scans (Phase 3).
-      delivered_qty: item.supplier_reported_qty,
-      err_code: item.err_code,
-    }));
-
-    if (lineItemRows.length > 0) {
-      const { error: lineItemsError } = await supabase
-        .from("delivery_line_items")
-        .insert(lineItemRows);
-
-      if (lineItemsError) {
-        return NextResponse.json(
-          {
-            error: `Failed to save line items for "${dept.department_name}": ${lineItemsError.message}`,
-            batch_id: batch.batch_id,
-          },
-          { status: 500 }
-        );
-      }
-    }
-  }
-
   return NextResponse.json(
     {
-      batch_id: batch.batch_id,
+      batch_id: batchId,
       invoice_number: parseResult.invoice_number,
-      department_orders_created: departmentOrderIds.length,
+      department_orders_created: parseResult.departments.length,
     },
     { status: 201 }
   );

@@ -176,7 +176,7 @@ None of this requires AI — it's deterministic parsing logic specific to this i
 1. User selects **Organization** (Admin only — Client Main Panel is locked to their own org).
 2. User uploads the PDF. No manual department selection needed — the departments come from the invoice itself.
 3. System parses the invoice: extracts `invoice_number`, `invoice_date`, then walks each `DEPARTMENT:` section, creating one `DepartmentOrder` per section and matching/creating the corresponding `Department` record by its source code (e.g. `1021`).
-4. For each line item: `barcode_value` = UPC Code, `ordered_qty` = Ord Qty, `supplier_reported_qty` = DR Qty, and `delivered_qty` is **pre-filled with `supplier_reported_qty`** (your confirmed decision — the supplier's claimed shipment is the starting point, refined by actual dock scans).
+4. For each line item: `barcode_value` = UPC Code, `ordered_qty` = Ord Qty, `supplier_reported_qty` = DR Qty, and `delivered_qty` **starts at zero** — see the Phase 2 revision note below (§8, decision 7).
 5. The new sheets are immediately visible to the Client Main Panel (and Admin) for that org, split by department — not visible to Client Portal users.
 
 ### 4.3 Handling re-uploads / corrections
@@ -219,7 +219,7 @@ For each `DeliveryLineItem`:
 | `delivered_qty == ordered_qty` | Fully Received |
 | `delivered_qty > ordered_qty` | Over-received (flagged for review) |
 
-Note: because `delivered_qty` now starts pre-filled with the supplier's `DR Qty` (not zero), some lines may show as "Partial" or even "Fully Received" **before any scan happens at all** — that's expected and correct, since the supplier already reported a shortfall on lines like the `092`/`260` error-coded rows in your sample. Dock scans then move `delivered_qty` further from there, so the number reflects the best available information at each stage: supplier's claim first, physical verification second.
+**Revised during Phase 2, after real-world testing:** `delivered_qty` no longer starts pre-filled with the supplier's `DR Qty`. It starts at zero for every line, so every line shows "Pending" immediately after upload, regardless of what the supplier's invoice claims. `supplier_reported_qty` is still stored and displayed as a reference value — useful for comparing against what staff actually scan — but it no longer drives status on its own. The original pre-fill design (this paragraph originally described it as "expected and correct") turned out to defeat the actual purpose of the system: it let the system report a delivery as complete based purely on the supplier's paperwork, before any physical verification occurred. See `docs/phases/phase-2.md` and migration `0008` for the full reasoning and the fix.
 
 For the whole `DepartmentOrder` (sheet-level status, shown to Client Main Panel):
 - **Pending** — no lines confirmed yet
@@ -252,7 +252,7 @@ This matches your requirement: *"how many products have been delivered, how many
 | 4 | Client Main Panel CRUD | Full CRUD on departments confirmed, including rename |
 | 5 | Delivery date | **Revised:** only `invoice_date` (from PDF) is used — staff select from a list of existing invoice dates rather than entering a new date (see §5) |
 | 6 | Department mapping | Auto-created/matched directly from the PDF's own `DEPARTMENT:` sections, keyed by source department code |
-| 7 | Supplier's DR Qty vs dock scans | `delivered_qty` pre-fills from supplier's `DR Qty` at upload, then dock scans adjust it further as staff physically verify |
+| 7 | Supplier's DR Qty vs dock scans | **Revised in Phase 2** — `delivered_qty` starts at zero, never pre-filled from supplier's `DR Qty`; only real dock scans (Phase 3) increment it. `supplier_reported_qty` is retained as a reference/comparison value only. See migration `0008`. |
 | 8 | File format | PDF, confirmed — Loblaws DC invoice template, consistent structure, rule-based extraction (no AI needed) |
 | 9 | Wrong-department/invoice scans | System refuses the scan and searches other departments for a match, suggesting the correct one if found (§5, step 8) |
 | 10 | Fully Received invoices | Locked from further scans once complete; remains viewable/exportable by Client Main Panel at any time (§5, step 9; §6) |
