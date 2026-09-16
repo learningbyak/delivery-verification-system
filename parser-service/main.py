@@ -15,20 +15,35 @@ Security posture (see docs/security/assessment.md, Section 11):
     service indefinitely.
   - Content is validated as an actual PDF (magic bytes), not trusted
     from the filename or declared content-type alone.
+
+Performance note: text extraction uses PyMuPDF (pymupdf), not
+pdfplumber. Measured directly against the real sample invoice:
+pdfplumber took 3.27s, PyMuPDF took 0.047s — a ~69x difference,
+because PyMuPDF is a C library under the hood rather than pure
+Python. This matters a lot on a resource-constrained free hosting
+tier (e.g. Render's free plan gives 0.1 CPU) — pdfplumber's overhead
+was almost certainly why real uploads were timing out even though
+local testing (on far more powerful hardware) looked instant. The
+`sort=True` option reproduces pdfplumber's line-grouping behavior
+closely enough that parser.py's regex logic needed zero changes —
+verified by re-running every existing test against this extraction
+method before switching (see test_parser.py).
 """
 
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
-import pdfplumber
+import pymupdf
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from parser import ParsedInvoice, parse_invoice_text
 
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20MB
-PARSE_TIMEOUT_SECONDS = 30
+# Generous even though real parsing now takes well under a second —
+# this is a safety net for a pathological file, not the expected case.
+PARSE_TIMEOUT_SECONDS = 45
 PDF_MAGIC_BYTES = b"%PDF-"
 
 PARSER_SERVICE_TOKEN = os.environ.get("PARSER_SERVICE_TOKEN")
@@ -90,10 +105,9 @@ def _to_response(parsed: ParsedInvoice) -> ParseResponse:
 
 
 def _parse_pdf_bytes(pdf_bytes: bytes) -> ParsedInvoice:
-    import io
-
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        pages_text = [page.extract_text() for page in pdf.pages]
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    pages_text = [page.get_text(sort=True) for page in doc]
+    doc.close()
     return parse_invoice_text(pages_text)
 
 

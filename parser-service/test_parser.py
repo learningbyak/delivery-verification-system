@@ -16,7 +16,7 @@ test_deli_is_genuinely_absent_from_sample_file below.
 
 import os
 
-import pdfplumber
+import pymupdf
 import pytest
 
 from parser import parse_invoice_text
@@ -28,8 +28,9 @@ FIXTURE_PATH = os.path.join(
 
 @pytest.fixture(scope="module")
 def parsed_invoice():
-    with pdfplumber.open(FIXTURE_PATH) as pdf:
-        pages_text = [page.extract_text() for page in pdf.pages]
+    doc = pymupdf.open(FIXTURE_PATH)
+    pages_text = [page.get_text(sort=True) for page in doc]
+    doc.close()
     return parse_invoice_text(pages_text)
 
 

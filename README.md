@@ -22,7 +22,7 @@ Every organization's data is isolated at the database level via PostgreSQL Row-L
 
 - **Framework:** Next.js 16 (App Router, TypeScript)
 - **Database & Auth:** Supabase (PostgreSQL, Row-Level Security, Auth, Realtime, Storage)
-- **PDF parsing:** Python 3.12 / FastAPI / pdfplumber — a separate, network-isolated microservice
+- **PDF parsing:** Python 3.12 / FastAPI / PyMuPDF — a separate, network-isolated microservice
 - **Hosting:** Vercel (app) + Render (parser service)
 - **Secret handling:** bcrypt-hashed org secret codes, service-role key confined to one file, never bundled client-side
 
