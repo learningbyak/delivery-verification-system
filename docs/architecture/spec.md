@@ -116,17 +116,22 @@ Organization
 | status | enum | pending / partially_received / fully_received |
 
 **DeliveryLineItem** — one row per product row within a department section
+
+> **Terminology, finalized in Phase 2 after real-world use:** `delivered_qty` means what the *invoice* claims was delivered (the supplier's own `DR Qty` column). `received_qty` means what an *employee scan* actually verified. This is the opposite of an earlier internal naming (`supplier_reported_qty` / `delivered_qty`) that caused real confusion — renamed via migration `0009` to match how the business actually talks about it.
+
 | Field | Type | Notes |
 |---|---|---|
 | line_item_id | UUID (PK) | |
 | dept_order_id | FK → DepartmentOrder | |
-| row_data | JSON | The full original row exactly as printed: UPC Code, Article Number, Description, Pack Size, Unit Cost, Extended Cost, Tax, Retail Price, GPM%, etc. — every column preserved, nothing dropped |
+| row_data | JSON | The full original row exactly as printed — every column preserved, nothing dropped |
 | barcode_value | string | Extracted from the `UPC Code` column, indexed for fast scan lookup |
+| pack_size | string | e.g. `"20"` — from the invoice's Pack Size column |
+| size_spec | string | e.g. `"20x410.000G"` — from the invoice's Size column, displayed alongside pack_size |
 | ordered_qty | number | From `Ord Qty` |
-| supplier_reported_qty | number | From `DR Qty` — what the **supplier claims** they shipped (not verified by your staff) |
-| delivered_qty | number | **Pre-filled with `supplier_reported_qty` at upload** (per your decision in §8), then adjusted upward as your staff physically scan the item off the truck |
+| delivered_qty | number | From `DR Qty` — what the **supplier claims** they shipped (not verified by your staff) |
+| received_qty | number | Starts at **zero**, only ever changed by an actual employee scan (Phase 3) — never inferred from the invoice |
 | err_code | string, nullable | From `Err Code` (e.g. `092`, `260`) — supplier's own shortage reason, kept for reference |
-| line_status | enum | pending / partial / fully_received / over_received — computed from `delivered_qty` vs `ordered_qty` (see §6) |
+| line_status | enum | pending / partial / fully_received / over_received — computed from `received_qty` vs `ordered_qty` (see §6) |
 
 **DeliveryEvent** — one per scanning session (created when staff select an invoice date + enter their name)
 | Field | Type | Notes |
@@ -214,12 +219,12 @@ For each `DeliveryLineItem`:
 
 | Condition | line_status |
 |---|---|
-| `delivered_qty == 0` | Pending |
-| `0 < delivered_qty < ordered_qty` | Partial |
-| `delivered_qty == ordered_qty` | Fully Received |
-| `delivered_qty > ordered_qty` | Over-received (flagged for review) |
+| `received_qty == 0` | Pending |
+| `0 < received_qty < ordered_qty` | Partial |
+| `received_qty == ordered_qty` | Fully Received |
+| `received_qty > ordered_qty` | Over-received (flagged for review) |
 
-**Revised during Phase 2, after real-world testing:** `delivered_qty` no longer starts pre-filled with the supplier's `DR Qty`. It starts at zero for every line, so every line shows "Pending" immediately after upload, regardless of what the supplier's invoice claims. `supplier_reported_qty` is still stored and displayed as a reference value — useful for comparing against what staff actually scan — but it no longer drives status on its own. The original pre-fill design (this paragraph originally described it as "expected and correct") turned out to defeat the actual purpose of the system: it let the system report a delivery as complete based purely on the supplier's paperwork, before any physical verification occurred. See `docs/phases/phase-2.md` and migration `0008` for the full reasoning and the fix.
+**Revised during Phase 2, after real-world testing:** `received_qty` (renamed from an earlier `delivered_qty`) never starts pre-filled from the supplier's claim. It starts at zero for every line, so every line shows "Pending" immediately after upload, regardless of what the supplier's invoice claims. The invoice's own number is stored separately as `delivered_qty` (renamed from an earlier `supplier_reported_qty`) — useful for comparing against what staff actually scan — but it no longer drives status on its own. The original pre-fill design turned out to defeat the actual purpose of the system: it let the system report a delivery as complete based purely on the supplier's paperwork, before any physical verification occurred. See `docs/phases/phase-2.md` and migrations `0008`/`0009` for the full reasoning and the fix.
 
 For the whole `DepartmentOrder` (sheet-level status, shown to Client Main Panel):
 - **Pending** — no lines confirmed yet
@@ -252,7 +257,7 @@ This matches your requirement: *"how many products have been delivered, how many
 | 4 | Client Main Panel CRUD | Full CRUD on departments confirmed, including rename |
 | 5 | Delivery date | **Revised:** only `invoice_date` (from PDF) is used — staff select from a list of existing invoice dates rather than entering a new date (see §5) |
 | 6 | Department mapping | Auto-created/matched directly from the PDF's own `DEPARTMENT:` sections, keyed by source department code |
-| 7 | Supplier's DR Qty vs dock scans | **Revised in Phase 2** — `delivered_qty` starts at zero, never pre-filled from supplier's `DR Qty`; only real dock scans (Phase 3) increment it. `supplier_reported_qty` is retained as a reference/comparison value only. See migration `0008`. |
+| 7 | Supplier's DR Qty vs dock scans | **Revised in Phase 2** — `received_qty` (the scan-driven field) starts at zero, never pre-filled from the supplier's claim; only real dock scans (Phase 3) increment it. The invoice's own claimed quantity is stored as `delivered_qty`, retained as a reference/comparison value only. See migrations `0008` and `0009` (the latter also renamed the fields to their final names). |
 | 8 | File format | PDF, confirmed — Loblaws DC invoice template, consistent structure, rule-based extraction (no AI needed) |
 | 9 | Wrong-department/invoice scans | System refuses the scan and searches other departments for a match, suggesting the correct one if found (§5, step 8) |
 | 10 | Fully Received invoices | Locked from further scans once complete; remains viewable/exportable by Client Main Panel at any time (§5, step 9; §6) |

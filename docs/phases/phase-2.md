@@ -17,8 +17,22 @@
 4. **Partial data left behind when an upload failed, found by you.** The upload route wrote the batch, then each department, then each department's line items as *separate* sequential inserts from application code. If any step failed partway through (e.g. bug 3 above, or any other mid-upload failure), everything inserted *before* the failure stayed in the database — an incomplete, confusing partial upload, confirmed by a real screenshot. **Fixed in migration `0008`**: the entire ingestion now happens inside one Postgres function call (`ingest_parsed_invoice`), which is one transaction — verified directly by deliberately breaking an upload partway through and confirming that even the department that *would* have succeeded on its own left zero trace. The function is `SECURITY INVOKER` (not `DEFINER`), so RLS still applies to every insert inside it — also re-verified with a deliberate cross-org attempt, correctly rejected.
 5. **Status showing "Fully Received" before any employee ever scanned anything, found by you.** The original design (a decision made and confirmed earlier in the project) pre-filled `delivered_qty` with the supplier's own claimed quantity (`DR Qty`) at upload time. In practice this meant the system could show a delivery as complete based purely on the supplier's paperwork, before any physical verification happened — defeating the actual purpose of the system. **Reversed in migration `0008`**: `delivered_qty` now starts at `0` for every line item, verified directly (status correctly shows `pending` immediately after upload, regardless of what the supplier claimed). `supplier_reported_qty` is still stored as a reference value to compare against actual scans in Phase 3 — it just no longer drives status on its own.
 6. **PDF parsing itself too slow on free-tier hardware, found by you.** After fixing the network/cold-start timeout (bug 3's sibling issue, see the hotfix docs), a *different* timeout kept firing: `"PDF took too long to process"` — the parser's own internal processing timeout. Root cause: `pdfplumber` (the original parsing library) is pure Python and CPU-heavy; on Render's free tier (0.1 CPU — a tenth of a core), parsing the real sample invoice was slow enough to exceed the timeout, even though it took ~3.3 seconds on more typical hardware. **Fixed by switching to PyMuPDF**, a C-library-backed PDF reader: measured directly on the same file, pdfplumber took 3.27s, PyMuPDF took 0.047s — about 69x faster. Critically, PyMuPDF's `sort=True` text-extraction mode reproduces pdfplumber's line-grouping closely enough that **zero changes were needed to `parser.py`'s regex logic** — verified by re-running every existing test (all 8 pass) against the new extraction method before switching, plus a full end-to-end HTTP test (0.32s total round-trip, down from a 30s timeout).
+7. **Terminology mismatch and missing size data, found by you.** The database called the invoice's own claimed quantity `supplier_reported_qty` and the scan-verified quantity `delivered_qty` — backwards from how the business actually talks about it ("delivered" = what the invoice claims, "received" = what a scan verified). **Fixed in migration `0009`**: renamed `supplier_reported_qty` → `delivered_qty` and the old `delivered_qty` → `received_qty`, verified directly that Postgres correctly carried the rename through every dependent check constraint, trigger, and the ingestion function (re-tested the full insert → simulated scan → status computation chain end to end). Also added `pack_size` and `size_spec` as real, displayed columns — the parser extracted this all along, it just was never surfaced. The Client Main Panel navigation was also rebuilt as a strict 4-level hierarchy (Invoice Date → Invoice Number → Department → Products), each level scoped only to what was selected above it — see §Navigation below.
 
 Every one of these was caught by actually running the code against a real (locally-installed, temporary) PostgreSQL instance, a real FastAPI server, and real timing measurements — not by inspection alone. Same discipline going forward.
+
+## Navigation structure (added after real-world use)
+
+The Client Main Panel browses invoices as a strict 4-level hierarchy, each level scoped only to what was selected above it:
+
+```
+/client                                    → list of Invoice Dates
+/client/[date]                             → Invoice Numbers for that date
+/client/[date]/[batchId]                    → Departments for that invoice
+/client/[date]/[batchId]/[deptOrderId]       → Products for that invoice + department
+```
+
+Every query at every level filters explicitly by the parent level's ID (date → `invoice_date`, invoice → `batch_id`, department → `dept_order_id`) — this is what guarantees no data mixes between different invoices or dates, on top of RLS's org-level isolation. The products table shows both `delivered_qty` (the invoice's claim) and `received_qty` (the scan-verified count) side by side, plus `size_spec`/`pack_size`, with a plain-language note explaining the difference between the two quantity columns.
 
 ## Design decisions worth knowing about
 
@@ -33,6 +47,7 @@ Every one of these was caught by actually running the code against a real (local
 1. Run `supabase/migrations/0005_verify_org_secret_code.sql`, then `0006_invoice_ingestion.sql`, in that order, via the SQL Editor (after Phase 1's 4 migrations, which should already be applied).
 2. Run `supabase/migrations/0007_fix_department_order_status_trigger_performance.sql` — fixes the large-invoice timeout bug described above.
 3. Run `supabase/migrations/0008_atomic_ingestion_and_zero_start.sql` — fixes the partial-save-on-failure bug and the premature "Fully Received" status bug described above. Required regardless of which earlier migrations you'd already run.
+4. Run `supabase/migrations/0009_rename_qty_columns_and_add_size.sql` — renames the quantity columns to match real-world terminology and adds product size columns. Required regardless of which earlier migrations you'd already run.
 
 ## Deploying the parser service
 
@@ -58,6 +73,8 @@ This is a second, separate deployable component — it does not run on Vercel al
 - [ ] Uploading a large invoice (200+ line items in one department) completes without a timeout error
 - [ ] Every line item shows status "pending" immediately after upload, with delivered quantity 0 — regardless of what the supplier's invoice claims as delivered
 - [ ] Deliberately uploading a file that will fail partway through leaves **zero** trace in the database — no orphaned batch, no orphaned department data (hard to test without engineering a failure; trust the migration 0008 test notes above, or ask me to help construct one against your real project if you want to verify it yourself)
+- [ ] The Client Main Panel navigation follows Invoice Date → Invoice Number → Department → Products, in that order, and clicking through never shows data from a different invoice or date than the one selected
+- [ ] The products sheet shows both "Delivered (invoice)" and "Received (scanned)" as separate columns, plus each product's size — and "Received" stays at 0 until Phase 3 scanning exists
 
 ## Exit criteria
 
