@@ -23,12 +23,13 @@ type SectionConfig = {
   pagePrefix: string;
   apiPrefix: string;
   loginPage: string;
-  requiredRole: "admin" | "client_admin";
+  requiredRole: "admin" | "client_admin" | "portal";
 };
 
 const SECTIONS: SectionConfig[] = [
   { pagePrefix: "/admin", apiPrefix: "/api/admin", loginPage: "/admin/login", requiredRole: "admin" },
   { pagePrefix: "/client", apiPrefix: "/api/client", loginPage: "/client/login", requiredRole: "client_admin" },
+  { pagePrefix: "/portal", apiPrefix: "/api/portal", loginPage: "/portal/login", requiredRole: "portal" },
 ];
 
 function matchSection(pathname: string): SectionConfig | null {
@@ -107,5 +108,12 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*", "/api/admin/:path*", "/client/:path*", "/api/client/:path*"],
+  matcher: [
+    "/admin/:path*",
+    "/api/admin/:path*",
+    "/client/:path*",
+    "/api/client/:path*",
+    "/portal/:path*",
+    "/api/portal/:path*",
+  ],
 };

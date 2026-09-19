@@ -2,7 +2,7 @@
 
 A multi-tenant web application for verifying grocery/retail deliveries against invoices — barcode scanning, live delivery-status tracking, and organization-scoped data isolation, built on Next.js and Supabase.
 
-**Current status: Phase 2 of 9 — Client Main Panel + PDF ingestion.** See [`docs/phases/`](./docs/phases) for the full roadmap and exactly what is and isn't built yet.
+**Current status: Phase 3 of 9 — Client Portal + barcode scanning core loop.** See [`docs/phases/`](./docs/phases) for the full roadmap and exactly what is and isn't built yet.
 
 ---
 
@@ -21,7 +21,8 @@ Every organization's data is isolated at the database level via PostgreSQL Row-L
 ## Tech stack
 
 - **Framework:** Next.js 16 (App Router, TypeScript)
-- **Database & Auth:** Supabase (PostgreSQL, Row-Level Security, Auth, Realtime, Storage)
+- **Database & Auth:** Supabase (PostgreSQL, Row-Level Security, Auth incl. anonymous sign-ins for the Portal, Realtime, Storage)
+- **Camera barcode scanning:** html5-qrcode (UPC/EAN/Code128), personal phones (BYOD)
 - **PDF parsing:** Python 3.12 / FastAPI / PyMuPDF — a separate, network-isolated microservice
 - **Hosting:** Vercel (app) + Render (parser service)
 - **Secret handling:** bcrypt-hashed org secret codes, service-role key confined to one file, never bundled client-side
@@ -137,7 +138,7 @@ Built in phases, each one shippable and testable on its own — see [`docs/phase
 - [x] **Phase 0** — Foundations (secure empty skeleton, CI, RLS-by-default enforcement)
 - [x] **Phase 1** — Admin Panel core (organizations, departments, real RLS policies)
 - [x] **Phase 2** — Client Main Panel auth + PDF invoice ingestion
-- [ ] **Phase 3** — Client Portal + barcode scanning core loop
+- [x] **Phase 3** — Client Portal + barcode scanning core loop
 - [ ] **Phase 4** — Real-time updates + export
 - [ ] **Phase 5** — Admin activity feed + invoice locking
 - [ ] **Phase 6** — Security hardening pass (rate limiting, headers, logging)
